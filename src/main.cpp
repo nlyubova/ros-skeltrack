@@ -14,8 +14,12 @@
 
 #define DEBUG 0
 
-#define ROS_DEPTH_PATH "/camera/depth/image_raw"
-#define FRAME_ID "depth_test"
+//#define ROS_DEPTH_PATH "/camera/depth/image_raw"
+#define ROS_DEPTH_PATH "/camera/depth_registered/image_raw"
+//#define FRAME_ID "depth_test"
+#define FRAME_ID "CameraDepth_frame"
+//#define FRAME_ID "CameraDepth_depth_optical_frame"
+//#define FRAME_ID "camera_rgb_optical_frame"
 #define ROS_BUFFER_FRAMES 10
 
 using std::string;
@@ -46,8 +50,8 @@ static float SMOOTHING_FACTOR = .0;
   * Values: 0 - INT_MAX
   */
 static char ENABLE_THRESHOLD = 0;
-static unsigned int THRESHOLD_BEGIN = 500;
-static unsigned int THRESHOLD_END   = 1500;
+static unsigned int THRESHOLD_BEGIN = 200;
+static unsigned int THRESHOLD_END   = 3000;
 
 typedef struct
 {
@@ -57,6 +61,20 @@ typedef struct
   unsigned int reduced_width;
   unsigned int reduced_height;
 } BufferInfo;
+
+typedef struct
+{
+  guint16 *data;
+  guint width;
+  guint height;
+} Buffer;
+
+typedef struct
+{
+  SkeltrackSkeleton *skeleton;
+  GMainLoop *main_loop;
+  Buffer *buffer;
+} Fixture;
 
 void publishTransforms(const string frame_id);
 void publishTransform(const SkeltrackJoint& joint,
@@ -167,12 +185,18 @@ process_buffer (const std::vector<uint8_t> buffer,
     for (i = 0; i < reduced_width; i++) {
         for (j = 0; j < reduced_height; j++) {
             index = (j * width * dimension_factor + i * dimension_factor) * 2; //2 int8 in a int16
-            value = ((uint16_t)buffer[index+1])<<8 + buffer[index];
-            if (i == 0 && j == 0) ROS_INFO("%f", (float) value);
+            value = static_cast<uint16_t>(buffer[index+1]*256 + buffer[index]); //<<8
+
+            /*index = j * width * dimension_factor + i * dimension_factor; //2 int8 in a int16
+            value = static_cast<uint16_t>(buffer[index]); //<<8*/
+
+            //if (i == 0 && j == 0) ROS_INFO("%f", (float) value);
             if (ENABLE_THRESHOLD && (value < threshold_begin || value > threshold_end)) {
               reduced_buffer[j * reduced_width + i] = 0;
             } else {
               reduced_buffer[j * reduced_width + i] = value;
+/*if (value != 0)
+  std::cout << value << std::endl;*/
 			}
         }
     }
@@ -187,6 +211,55 @@ process_buffer (const std::vector<uint8_t> buffer,
 
   return buffer_info;
 }
+
+/*static BufferInfo *
+reduce_depth_file (const std::vector<uint8_t> buffer,
+                unsigned int width,
+                unsigned int height,
+
+                unsigned char dimension_factor,
+                unsigned int threshold_begin,
+                unsigned int threshold_end)
+{
+    guint16 *depth, *reduced_depth;
+
+    unsigned int i, j, reduced_width, reduced_height;
+    uint16_t *reduced_buffer;
+
+//    if (buffer == NULL) return NULL;
+
+    reduced_width = ENABLE_REDUCTION ? (width - width % dimension_factor) / dimension_factor : width;
+    reduced_height = ENABLE_REDUCTION ? (height - height % dimension_factor) / dimension_factor : height;
+
+    reduced_buffer = (uint16_t*) malloc (reduced_width * reduced_height * sizeof(uint16_t));
+    if (reduced_buffer == NULL) return NULL;
+
+    unsigned int index;
+    uint16_t value;
+    for (i = 0; i < reduced_width; i++) {
+        for (j = 0; j < reduced_height; j++) {
+            index = (j * width * dimension_factor + i * dimension_factor) * 2; //2 int8 in a int16
+
+            value = static_cast<uint16_t>(buffer[index+1]*256 + buffer[index]); //<<8
+            //if (i == 0 && j == 0) ROS_INFO("%f", (float) value);
+            if (ENABLE_THRESHOLD && (value < threshold_begin || value > threshold_end)) {
+              reduced_buffer[j * reduced_width + i] = 0;
+            } else {
+              reduced_buffer[j * reduced_width + i] = value;
+      }
+        }
+    }
+
+    buffer_info = (BufferInfo*) malloc(sizeof(BufferInfo));
+    if (buffer_info == NULL) return NULL;
+    buffer_info->reduced_buffer = reduced_buffer;
+    buffer_info->reduced_width = reduced_width;
+    buffer_info->reduced_height = reduced_height;
+    buffer_info->width = width;
+    buffer_info->height = height;
+
+  return buffer_info;
+}*/
 
 /** onNewDepth Receives and routes an depth image to be processed
   *	dimage - Image struct containing mono uint16 data
@@ -209,10 +282,17 @@ static void onNewDepth(const sensor_msgs::Image& dimage){
                                  dimension_factor,
                                  thold_begin,
                                  thold_end);
-                                 
+//ROS_INFO_STREAM(buffer_info);
     // skeleton is global
+
+    /*guint16 *depth;
+    depth = reduce_depth_file (file_name,
+                               reduction,
+                               &width,
+                               &height);*/
+
     skeltrack_skeleton_track_joints (skeleton,
-                                     (guint16*) buffer_info->reduced_buffer,
+                                     buffer_info->reduced_buffer, //(guint16*)
                                      (guint16) buffer_info->reduced_width,
                                      (guint16) buffer_info->reduced_height,
                                      NULL,
@@ -229,7 +309,7 @@ on_track_joints (GObject      *obj,
     GError *error = NULL;
     BufferInfo* buffer_info = (BufferInfo*) user_data;
    
-    ROS_INFO("Got joint data");
+ROS_INFO("Got joint data");
  
     list = skeltrack_skeleton_track_joints_finish (skeleton, res, &error);
     
